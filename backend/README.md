@@ -65,3 +65,24 @@ Fusion. Lexical is not optional: queries are dominated by exact species tokens
 
 Answers are grounded in the selected map cell, so the same question against a
 41 C bare block and a shaded park block gives different advice.
+
+## Container
+
+```bash
+docker build -t canopycast-api .
+docker run -p 8000:8000 canopycast-api
+```
+
+Binds `$PORT` if the host sets one, which Render and Railway both do.
+
+Not yet built or run anywhere. It was written against the app but no Docker
+daemon was available to verify it, so treat the first build as untested.
+
+The index is deliberately not baked into the image, since building it needs an
+API key. Run it once at deploy time against a mounted volume:
+
+```bash
+docker run --rm -e OPENAI_API_KEY=... \
+  -v chroma_data:/home/appuser/app/chroma_db \
+  canopycast-api python -m app.ingest
+```
