@@ -147,7 +147,10 @@ def get_city_grid(city: str = config.DEFAULT_CITY):
 def get_cell_stats(lat: float, lon: float, city: str = config.DEFAULT_CITY):
     from . import database
 
-    cell = database.get_cell_by_latlon(config.DB_PATH, city, lat, lon)
+    try:
+        cell = database.get_cell_by_latlon(config.DB_PATH, city, lat, lon)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"no grid for {city}")
     if cell is None:
         raise HTTPException(status_code=404, detail="no cell at that coordinate")
     return cell

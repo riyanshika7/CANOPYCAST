@@ -172,7 +172,21 @@ def test_cell_stats_london_returns_404_not_clamp(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7. Cell stats: bad input is 422
+# 7. Cell stats: unknown city is 404, not 500
+# ---------------------------------------------------------------------------
+
+
+def test_cell_stats_unknown_city_returns_404_not_500(client: TestClient) -> None:
+    response = client.get(
+        "/api/cell-stats",
+        params={"city": "Atlantis", "lat": 22.57, "lon": 88.36},
+    )
+    assert response.status_code == 404
+    assert "Atlantis" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# 8. Cell stats: bad input is 422
 # ---------------------------------------------------------------------------
 
 
@@ -192,7 +206,7 @@ def test_cell_stats_non_numeric_coord_returns_422(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8. Optimize: happy path
+# 9. Optimize: happy path
 # ---------------------------------------------------------------------------
 
 
