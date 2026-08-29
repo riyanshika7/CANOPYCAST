@@ -9,3 +9,4 @@ __pycache__/
 *.pyc
 .ledger/
 .ledger/
+backend/chroma_db/
