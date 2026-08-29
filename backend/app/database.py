@@ -9,6 +9,8 @@ from .schema import CELL_DEG, CITY_CENTRES, GRID_SIZE, Cell, CityGrid
 _BASE_TEMP_C = 34.2
 _TEMP_JITTER_C = 0.35
 _KM_PER_DEG_LAT = 111.32
+# How far outside the grid a click may land and still snap to an edge cell.
+_SNAP_TOLERANCE_CELLS = 1.0
 
 # (x, y, amplitude_C, sigma_cells). (0, 0) is the SW cell.
 _HOTSPOTS = (
@@ -198,11 +200,22 @@ def get_cell(db_path: str, city: str, cell_id: str) -> Cell | None:
 
 
 def get_cell_by_latlon(db_path: str, city: str, lat: float, lon: float) -> Cell | None:
+    """Snap a coordinate to its grid cell, or None if it is outside the city.
+
+    Clamping without a bounds check meant a click in London returned the
+    south-west corner of Kolkata with a 200, so the dashboard would show
+    confident stats for the wrong place. A point just outside is still snapped,
+    since map clicks land fractionally off the edge through float rounding.
+    """
     origin_lat, origin_lon = _origin(city)
-    x = math.floor((lon - origin_lon) / CELL_DEG)
-    y = math.floor((lat - origin_lat) / CELL_DEG)
-    x = max(0, min(GRID_SIZE - 1, x))
-    y = max(0, min(GRID_SIZE - 1, y))
+    fx = (lon - origin_lon) / CELL_DEG
+    fy = (lat - origin_lat) / CELL_DEG
+    if not (-_SNAP_TOLERANCE_CELLS <= fx < GRID_SIZE + _SNAP_TOLERANCE_CELLS):
+        return None
+    if not (-_SNAP_TOLERANCE_CELLS <= fy < GRID_SIZE + _SNAP_TOLERANCE_CELLS):
+        return None
+    x = max(0, min(GRID_SIZE - 1, math.floor(fx)))
+    y = max(0, min(GRID_SIZE - 1, math.floor(fy)))
     return get_cell(db_path, city, f"{x}_{y}")
 
 

@@ -54,7 +54,8 @@ class PlantingSite(BaseModel):
 class OptimizeRequest(BaseModel):
     city: str = "Kolkata"
     selected_cell_id: Optional[str] = None
-    top_n: int = 5
+    # Bounded: an unbounded top_n returned all 400 cells as one response.
+    top_n: int = Field(default=5, ge=1, le=25)
 
 
 class OptimizeResponse(BaseModel):

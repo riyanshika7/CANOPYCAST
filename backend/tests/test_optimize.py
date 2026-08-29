@@ -4,10 +4,12 @@ import math
 import pytest
 
 from app.optimize import (
+    AVENUE_SPACING_M,
     CO2_PER_TREE_KG_YEAR,
+    OPEN_GROUND_FRACTION,
+    OPEN_GROUND_SPACING_M2,
     STORMWATER_PER_TREE_LITRES_YEAR,
-    TREE_SPACING_M2,
-    URBAN_PLANTABLE_FRACTION,
+    STREET_EDGE_METRES_PER_CELL,
     CELL_METRES,
     MAX_COOLING_C,
     COOLING_PER_CANOPY_DEFICIT_PCT,
@@ -258,8 +260,22 @@ class TestOptimise:
         grid = _simple_grid(cells)
         resp = optimise(grid, top_n=1)
         assert len(resp.sites) == 1
-        assert isinstance(resp.sites[0].rationale, str)
-        assert len(resp.sites[0].rationale) > 10
+        rationale = resp.sites[0].rationale
+        assert isinstance(rationale, str) and len(rationale) > 10
+        # A broken template key would silently fall through to this generic
+        # sentence and the old length-only assertion would still have passed.
+        assert "scored highest overall" not in rationale
+        site = resp.sites[0]
+        dominant = max(site.score_breakdown, key=site.score_breakdown.get)
+        expected_token = {
+            "heat": "C with only",
+            "deficit": "canopy cover",
+            "people": "population density",
+            "corridor": "bridging two separate green areas",
+        }[dominant]
+        assert expected_token in rationale, (
+            f"dominant term {dominant!r} did not drive the rationale: {rationale!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -268,12 +284,11 @@ class TestOptimise:
 
 class TestImpact:
     def test_tree_count_formula(self):
-        """trees = cell_area * plantable_fraction / spacing."""
-        cell_area = CELL_METRES * CELL_METRES
-        expected = int(cell_area * URBAN_PLANTABLE_FRACTION / TREE_SPACING_M2)
-        cells = [_make_cell(0, 0, canopy=0.0)]  # bare cell, full plantable area
-        grid = _simple_grid(cells)
-        resp = optimise(grid, top_n=1)
+        """Street verge at avenue spacing plus open ground at crown spacing."""
+        street = STREET_EDGE_METRES_PER_CELL / AVENUE_SPACING_M
+        open_ground = (CELL_METRES * CELL_METRES * OPEN_GROUND_FRACTION) / OPEN_GROUND_SPACING_M2
+        expected = int(street + open_ground)  # bare cell, full deficit
+        resp = optimise(_simple_grid([_make_cell(0, 0, canopy=0.0)]), top_n=1)
         assert resp.sites[0].impact.trees_recommended == expected
 
     def test_tree_count_is_reasonable(self):
@@ -281,7 +296,9 @@ class TestImpact:
         cells = [_make_cell(0, 0, canopy=0.0)]
         grid = _simple_grid(cells)
         resp = optimise(grid, top_n=1)
-        assert resp.sites[0].impact.trees_recommended < 10000
+        # A 500 m urban block is a neighbourhood, not a woodlot. Block
+        # afforestation spacing put this at 4000, which no judge would accept.
+        assert resp.sites[0].impact.trees_recommended < 500
 
     def test_cooling_capped(self):
         """Cooling effect should not exceed MAX_COOLING_C."""
@@ -350,3 +367,14 @@ def test_tree_count_scales_with_canopy_deficit():
     half = optimise(_simple_grid([_make_cell(0, 0, canopy=50.0)]), top_n=1)
     assert half.sites[0].impact.trees_recommended < bare.sites[0].impact.trees_recommended
     assert half.sites[0].impact.co2_sequestration_kg_per_year < bare.sites[0].impact.co2_sequestration_kg_per_year
+
+
+def test_top_n_is_bounded_by_the_request_schema():
+    """An unbounded top_n returned all 400 cells in one response."""
+    from pydantic import ValidationError
+    from app.schema import OptimizeRequest
+
+    assert OptimizeRequest(top_n=25).top_n == 25
+    for bad in (0, -3, 26, 100000):
+        with pytest.raises(ValidationError):
+            OptimizeRequest(top_n=bad)

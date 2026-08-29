@@ -30,25 +30,43 @@ MIN_SEPARATION: int = 2
 # Approximate cell side length in metres (~500 m based on CELL_DEG at Kolkata latitude).
 CELL_METRES: float = 500.0
 
-# Fraction of an urban cell realistically available for tree planting (order-of-magnitude
-# estimate for dense Kolkata neighbourhoods; most area is buildings and roads).
-URBAN_PLANTABLE_FRACTION: float = 0.10
+# Planting basis. This is street and open-space planting in a built-up city, NOT
+# block afforestation, and the two have very different densities.
+#
+# The West Bengal TPOFA guideline of 2.5 m x 2.5 m applies to plantation blocks
+# on open government land. Applying it to an urban cell implies 4000 trees in a
+# single 500 m block, which is a woodlot, not a neighbourhood. Avenue and street
+# planting in the same guidance is spaced far wider so crowns do not collide and
+# so the trees clear traffic and services.
+AVENUE_SPACING_M: float = 8.0
 
-# West Bengal TPOFA recommended spacing: 2.5 m x 2.5 m = 6.25 m^2 per tree.
-TREE_SPACING_M2: float = 6.25
+# Plantable street edge available in a 500 m cell. A cell of this size typically
+# carries a few hundred metres of road frontage on each side of two or three
+# streets. 1200 m of usable verge is a deliberately conservative round figure;
+# it is an assumption, not a measurement, and it is the number to challenge
+# first if these projections are ever questioned.
+STREET_EDGE_METRES_PER_CELL: float = 1200.0
 
-# Average CO2 sequestered per urban tree per year in kg (order-of-magnitude estimate).
+# Share of a cell that is open ground (small parks, institutional grounds,
+# setbacks) where infill planting at wider spacing is possible.
+OPEN_GROUND_FRACTION: float = 0.04
+OPEN_GROUND_SPACING_M2: float = 100.0  # 10 m x 10 m for a free-standing crown
+
+# Annual CO2 per established urban tree, kg. Commonly cited urban forestry
+# figures span roughly 10 to 50 kg/tree/year depending on species and age;
+# this sits at the low end on purpose.
 CO2_PER_TREE_KG_YEAR: float = 22.0
 
-# Average stormwater intercepted per tree per year in litres (order-of-magnitude estimate).
+# Annual stormwater interception per established tree, litres. Order-of-magnitude
+# estimate, deliberately conservative.
 STORMWATER_PER_TREE_LITRES_YEAR: float = 15000.0
 
-# Cooling effect per percentage point of canopy deficit, in degrees C
-# (order-of-magnitude estimate calibrated so a fully bare cell approaches MAX_COOLING_C).
-COOLING_PER_CANOPY_DEFICIT_PCT: float = 0.025
-
-# Maximum cooling effect achievable for any single site, degrees C.
+# Local cooling from added canopy. Urban canopy cooling of roughly 1 to 3 C is
+# widely reported for well-shaded streets, so this is a linear model anchored at
+# a documented ceiling rather than a measured coefficient. Stated that way so the
+# assumption is visible instead of implied.
 MAX_COOLING_C: float = 2.5
+COOLING_PER_CANOPY_DEFICIT_PCT: float = MAX_COOLING_C / 100.0
 
 
 def score_cell(
@@ -246,26 +264,28 @@ def _build_grid_stats(cells: list[Cell]) -> dict:
 # ---------------------------------------------------------------------------
 
 def _compute_impact(cell: Cell) -> ImpactProjection:
-    """Impact projection for planting a single cell, with defensible constants."""
-    cell_area_m2 = CELL_METRES * CELL_METRES
-    canopy_deficit_pct = max(0.0, 100.0 - cell.canopy_cover)
+    """Projected impact of planting a single cell.
 
-    # Only the unplanted share of the plantable area is available. Without this
-    # the tree count is a constant and every site reports identical impact,
-    # which reads as a hardcoded number on the dashboard.
-    plantable_m2 = cell_area_m2 * URBAN_PLANTABLE_FRACTION * (canopy_deficit_pct / 100.0)
-    trees = int(plantable_m2 / TREE_SPACING_M2)
+    Trees come from two plantable surfaces, street verge at avenue spacing and
+    open ground at crown spacing, each scaled by how bare the cell already is.
+    A cell that is already well covered has less room left to plant.
+    """
+    canopy_deficit = max(0.0, 100.0 - cell.canopy_cover) / 100.0
 
-    cooling = min(canopy_deficit_pct * COOLING_PER_CANOPY_DEFICIT_PCT, MAX_COOLING_C)
+    street_trees = (STREET_EDGE_METRES_PER_CELL / AVENUE_SPACING_M) * canopy_deficit
+    open_ground_m2 = CELL_METRES * CELL_METRES * OPEN_GROUND_FRACTION
+    open_trees = (open_ground_m2 / OPEN_GROUND_SPACING_M2) * canopy_deficit
+    trees = int(street_trees + open_trees)
 
-    co2 = trees * CO2_PER_TREE_KG_YEAR
-    stormwater = trees * STORMWATER_PER_TREE_LITRES_YEAR
+    cooling = min(canopy_deficit * 100.0 * COOLING_PER_CANOPY_DEFICIT_PCT, MAX_COOLING_C)
 
     return ImpactProjection(
         trees_recommended=trees,
         estimated_cooling_effect_c=round(cooling, 2),
-        co2_sequestration_kg_per_year=round(co2, 1),
-        stormwater_litres_diverted_per_year=round(stormwater, 1),
+        co2_sequestration_kg_per_year=round(trees * CO2_PER_TREE_KG_YEAR, 1),
+        stormwater_litres_diverted_per_year=round(
+            trees * STORMWATER_PER_TREE_LITRES_YEAR, 1
+        ),
     )
 
 

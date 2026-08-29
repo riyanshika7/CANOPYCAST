@@ -111,3 +111,21 @@ def test_park_proximity_is_geometric(db: str) -> None:
     by_id = {c.cell_id: c for c in cells}
     # Maidan sits near (6.5, 7.2); that cell must be closer than a far western corner.
     assert by_id["7_7"].park_proximity_km < by_id["0_19"].park_proximity_km
+
+
+def test_latlon_outside_the_city_returns_none(db: str) -> None:
+    """Clamping alone made a London click return a Kolkata corner cell."""
+    assert get_cell_by_latlon(db, "Kolkata", 51.5074, -0.1278) is None
+    assert get_cell_by_latlon(db, "Kolkata", -89.0, 0.0) is None
+    assert get_cell_by_latlon(db, "Kolkata", 22.5726, 120.0) is None
+
+
+def test_latlon_just_off_the_edge_still_snaps(db: str) -> None:
+    """Map clicks land fractionally outside the grid through float rounding."""
+    corner = get_cell(db, "Kolkata", "0_0")
+    assert corner is not None
+    nudged = get_cell_by_latlon(
+        db, "Kolkata", corner.lat - CELL_DEG * 0.4, corner.lon - CELL_DEG * 0.4
+    )
+    assert nudged is not None
+    assert nudged.cell_id == "0_0"
