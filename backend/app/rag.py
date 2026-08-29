@@ -1,6 +1,7 @@
 """Hybrid retrieval, session memory, and grounded answering for CanopyCast."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -8,9 +9,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from pydantic import ValidationError
 from rank_bm25 import BM25Okapi
 
-from .schema import Cell, ChatRequest, ChatResponse, Citation
+from .schema import (
+    Cell,
+    ChatRequest,
+    ChatResponse,
+    Citation,
+    RecommendResponse,
+    TreeRecommendation,
+)
 
 RRF_K = 60
 PER_SIDE = 12
@@ -63,13 +72,18 @@ def _cell_dict(cell: Cell | dict | None) -> dict:
     return cell.model_dump()
 
 
+def _round(value, places: int = 1):
+    """Round for display. Raw floats carry 15 decimals, which is noise."""
+    return round(value, places) if isinstance(value, (int, float)) else value
+
+
 def _format_cell(data: dict) -> str:
     return (
         f"cell_id: {data.get('cell_id')}\n"
-        f"temperature: {data.get('base_temperature')}\n"
-        f"canopy_cover: {data.get('canopy_cover')}\n"
+        f"temperature_c: {_round(data.get('base_temperature'))}\n"
+        f"canopy_cover_percent: {_round(data.get('canopy_cover'))}\n"
         f"population_density: {data.get('population_density')}\n"
-        f"park_proximity_km: {data.get('park_proximity_km')}"
+        f"park_proximity_km: {_round(data.get('park_proximity_km'), 2)}"
     )
 
 
@@ -299,3 +313,195 @@ def answer(
         for chunk in chunks
     ]
     return ChatResponse(response=text, citations=citations)
+
+
+_HEIGHT_NUM = re.compile(r"(\d+(?:\.\d+)?)")
+
+
+def _parse_height_ft(value) -> Optional[float]:
+    # Corpus writes "about 40 feet"; a guessed height would look measured.
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    match = _HEIGHT_NUM.search(str(value))
+    if not match:
+        return None
+    return float(match.group(1))
+
+
+def _chunk_citation(chunk: dict) -> Citation:
+    return Citation(
+        doc_title=str(chunk.get("doc_title", "")),
+        page=int(chunk.get("page", 0) or 0),
+        snippet=_snippet(chunk.get("text", "")),
+    )
+
+
+def _recommend_query(city: str, cell_data: dict) -> str:
+    parts = [city, "native species", "avenue tree", "shade", "spacing"]
+    if cell_data:
+        for key in (
+            "base_temperature",
+            "canopy_cover",
+            "population_density",
+            "park_proximity_km",
+        ):
+            val = cell_data.get(key)
+            if val is not None:
+                parts.append(str(val))
+    return " ".join(parts)
+
+
+def _recommend_system_prompt(city: str, has_cell: bool, n: int) -> str:
+    text = (
+        f"You are CanopyCast, an urban forestry advisor for {city}. "
+        "Return STRICT JSON: a top-level object with a 'recommendations' key "
+        f"holding a list of at most {n} tree recommendations. "
+        "JSON mode requires an object, not a bare array. "
+        "Each item has common_name, botanical_name (string or null), crown_shape, "
+        "mature_height_ft (number or null), why_here, caution. "
+        "You MUST only name species that actually appear in the retrieved excerpts. "
+        "Inventing a species is a failure. "
+        "mature_height_ft must be a number taken from the excerpts, or null. Do not guess."
+    )
+    if has_cell:
+        text += (
+            " A map cell is selected. why_here MUST reference that cell's actual "
+            "temperature, canopy cover percent, and population density numbers. "
+            "Do not give generic city-wide advice."
+        )
+    else:
+        text += (
+            " No map cell is selected. Give general city advice and say so plainly "
+            "in why_here."
+        )
+    return text
+
+
+def _recommend_user_payload(
+    city: str, cell_data: dict, chunks: list[dict], n: int
+) -> str:
+    parts = [f"City: {city}", f"Return at most {n} recommendations."]
+    if cell_data:
+        parts.append("Selected cell stats:\n" + _format_cell(cell_data))
+        parts.append(
+            "why_here must cite these exact cell numbers (temperature, canopy_cover, "
+            "population_density)."
+        )
+    else:
+        parts.append("No cell is selected. Give general city advice and say so.")
+    excerpts = []
+    for chunk in chunks:
+        excerpts.append(
+            f"[{chunk.get('doc_title', 'document')}, p.{chunk.get('page', 0)}]\n"
+            f"{chunk.get('text', '')}"
+        )
+    if excerpts:
+        parts.append("Manual excerpts:\n" + "\n\n".join(excerpts))
+    else:
+        parts.append("Manual excerpts:\n(none retrieved)")
+    parts.append(
+        "Respond with JSON: {\"recommendations\": [ ... ]} using only species "
+        "named in the excerpts."
+    )
+    return "\n\n".join(parts)
+
+
+def _parse_recommendation_rows(text: str) -> list:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"unparseable JSON from model: {exc}") from exc
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        rows = data.get("recommendations", [])
+        if rows is None:
+            return []
+        if isinstance(rows, list):
+            return rows
+        raise ValueError("recommendations is not a list")
+    raise ValueError("JSON must be an object or array")
+
+
+def _citations_for_species(
+    common_name: str, botanical_name: Optional[str], chunks: list[dict]
+) -> list[Citation]:
+    names = [n.lower() for n in (common_name, botanical_name) if n]
+    if not names:
+        return []
+    found: list[Citation] = []
+    for chunk in chunks:
+        hay = str(chunk.get("text", "")).lower()
+        if any(name in hay for name in names):
+            found.append(_chunk_citation(chunk))
+    return found
+
+
+def _row_to_recommendation(raw, chunks: list[dict]) -> Optional[TreeRecommendation]:
+    if not isinstance(raw, dict):
+        return None
+    payload = {
+        "common_name": raw.get("common_name"),
+        "botanical_name": raw.get("botanical_name"),
+        "crown_shape": raw.get("crown_shape"),
+        "mature_height_ft": _parse_height_ft(raw.get("mature_height_ft")),
+        "why_here": raw.get("why_here"),
+        "caution": raw.get("caution"),
+    }
+    try:
+        rec = TreeRecommendation.model_validate(payload)
+    except ValidationError:
+        return None
+    rec.citations = _citations_for_species(
+        rec.common_name, rec.botanical_name, chunks
+    )
+    return rec
+
+
+def recommend_trees(
+    city,
+    cell,
+    retriever,
+    client=None,
+    n=3,
+) -> RecommendResponse:
+    cell_data = _cell_dict(cell)
+    chunks = retriever.search(_recommend_query(city, cell_data), city=city, k=DEFAULT_K)
+    messages = [
+        {
+            "role": "system",
+            "content": _recommend_system_prompt(city, bool(cell_data), n),
+        },
+        {
+            "role": "user",
+            "content": _recommend_user_payload(city, cell_data, chunks, n),
+        },
+    ]
+    if client is None:
+        client = _real_openai_client()
+    model = os.environ.get("CANOPYCAST_CHAT_MODEL", "gpt-5.6-luna")
+    resp = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        response_format={"type": "json_object"},
+    )
+    text = (resp.choices[0].message.content or "").strip()
+    rows = _parse_recommendation_rows(text)
+    recs: list[TreeRecommendation] = []
+    for raw in rows:
+        rec = _row_to_recommendation(raw, chunks)
+        if rec is not None:
+            recs.append(rec)
+        if len(recs) >= n:
+            break
+    sources = [_chunk_citation(chunk) for chunk in chunks]
+    return RecommendResponse(
+        city=city,
+        cell_id=cell_data.get("cell_id") if cell_data else None,
+        recommendations=recs,
+        sources=sources,
+    )
