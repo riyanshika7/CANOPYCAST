@@ -15,9 +15,7 @@ export default function App() {
   const handleRunOptimizer = async () => {
     if (isOptimizing) return;
     setIsOptimizing(true);
-    
-    // Simulate optimization loader time (Day 3: Chirag's POST /api/optimize)
-    setTimeout(() => {
+       setTimeout(() => {
       setRecommendations([
         { lat: 22.5750, lon: 88.3660 },
         { lat: 22.5790, lon: 88.3720 }
