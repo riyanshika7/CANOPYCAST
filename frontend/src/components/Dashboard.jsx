@@ -1,4 +1,5 @@
 import React from "react";
+
 import {
   ShieldAlert,
   Leaf,
@@ -9,13 +10,18 @@ import {
   Thermometer,
 } from "lucide-react";
 
+import TemperatureChart from "./TemperatureChart";
+
 export default function Dashboard({
   selectedCell,
   onRunOptimizer,
   isOptimizing,
   recommendations,
 }) {
-  // Decide the color of the temperature card
+  // ======================================================
+  // TEMPERATURE COLOR
+  // ======================================================
+
   const getTempColor = (temperature) => {
     if (temperature >= 38) {
       return "text-red-600 bg-red-50 border-red-100";
@@ -28,7 +34,10 @@ export default function Dashboard({
     return "text-emerald-600 bg-emerald-50 border-emerald-100";
   };
 
-  // Decide the color of the canopy progress bar
+  // ======================================================
+  // CANOPY COLOR
+  // ======================================================
+
   const getCanopyColor = (canopy) => {
     if (canopy < 15) {
       return "bg-red-500";
@@ -44,52 +53,74 @@ export default function Dashboard({
   return (
     <div className="w-full h-full bg-slate-50 border-r border-slate-200 flex flex-col justify-between overflow-y-auto">
 
-      {/* ================= HEADER ================= */}
+      {/* ==================================================
+          HEADER
+      ================================================== */}
+
       <div className="p-6 bg-gradient-to-r from-emerald-800 to-teal-900 text-white shadow-sm">
+
         <div className="flex items-center gap-2 mb-1">
+
           <Leaf className="w-6 h-6 text-emerald-300" />
 
           <h1 className="text-xl font-bold tracking-tight">
             CanopyCast
           </h1>
+
         </div>
 
         <p className="text-xs text-emerald-100 opacity-90 font-medium">
           Urban Heat & Green-Corridor Planner
         </p>
+
       </div>
 
 
-      {/* ================= MAIN AREA ================= */}
+      {/* ==================================================
+          MAIN DASHBOARD AREA
+      ================================================== */}
+
       <div className="flex-1 p-5 space-y-6">
 
         {selectedCell ? (
 
           <div className="space-y-5">
 
-            {/* ================= LOCATION ================= */}
+            {/* ==================================================
+                LOCATION
+            ================================================== */}
+
             <div className="flex items-center gap-3 p-4 bg-white rounded-xl shadow-sm border border-slate-100">
 
               <MapPin className="w-5 h-5 text-emerald-600 shrink-0" />
 
               <div>
+
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                   Target Coordinates
                 </p>
 
                 <p className="text-sm text-slate-700 font-bold">
+
                   {selectedCell.lat.toFixed(5)}° N,{" "}
+
                   {selectedCell.lon.toFixed(5)}° E
+
                 </p>
+
               </div>
 
             </div>
 
 
-            {/* ================= CLIMATE CARDS ================= */}
+            {/* ==================================================
+                CLIMATE CARDS
+            ================================================== */}
+
             <div className="grid grid-cols-2 gap-4">
 
-              {/* TEMPERATURE */}
+              {/* ================= TEMPERATURE ================= */}
+
               <div
                 className={`p-4 rounded-xl border flex flex-col justify-between ${getTempColor(
                   selectedCell.temperature
@@ -97,11 +128,13 @@ export default function Dashboard({
               >
 
                 <div className="flex items-center gap-1">
+
                   <Thermometer className="w-4 h-4" />
 
                   <p className="text-xs font-semibold opacity-90">
                     Surface Temp
                   </p>
+
                 </div>
 
                 <p className="text-2xl font-black mt-2">
@@ -111,7 +144,8 @@ export default function Dashboard({
               </div>
 
 
-              {/* CANOPY */}
+              {/* ================= CANOPY ================= */}
+
               <div className="p-4 bg-white border border-slate-100 rounded-xl flex flex-col justify-between shadow-sm">
 
                 <p className="text-xs font-semibold text-slate-500">
@@ -147,10 +181,23 @@ export default function Dashboard({
             </div>
 
 
-            {/* ================= OTHER DETAILS ================= */}
+            {/* ==================================================
+                TEMPERATURE COMPARISON CHART
+            ================================================== */}
+
+            <TemperatureChart
+              selectedCell={selectedCell}
+            />
+
+
+            {/* ==================================================
+                POPULATION & PARK DETAILS
+            ================================================== */}
+
             <div className="bg-white border border-slate-100 rounded-xl p-4 space-y-3 shadow-sm">
 
-              {/* POPULATION */}
+              {/* ================= POPULATION ================= */}
+
               <div className="flex items-center justify-between">
 
                 <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -164,13 +211,16 @@ export default function Dashboard({
                 </div>
 
                 <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2 py-1 rounded-md">
+
                   {selectedCell.population_density}
+
                 </span>
 
               </div>
 
 
-              {/* PARK PROXIMITY */}
+              {/* ================= PARK PROXIMITY ================= */}
+
               <div className="flex items-center justify-between border-t border-slate-100 pt-3">
 
                 <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -184,9 +234,11 @@ export default function Dashboard({
                 </div>
 
                 <span className="text-xs font-bold text-slate-700">
+
                   {selectedCell.nearest_park_distance_km
                     ? `${selectedCell.nearest_park_distance_km} km`
                     : "1.2 km"}
+
                 </span>
 
               </div>
@@ -194,7 +246,10 @@ export default function Dashboard({
             </div>
 
 
-            {/* ================= OPTIMIZATION RESULT ================= */}
+            {/* ==================================================
+                PROJECTED ENVIRONMENTAL IMPACT
+            ================================================== */}
+
             {recommendations && recommendations.length > 0 && (
 
               <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 space-y-3">
@@ -210,7 +265,8 @@ export default function Dashboard({
 
                 <div className="grid grid-cols-3 gap-2 pt-1 text-center">
 
-                  {/* COOLING */}
+                  {/* ================= COOLING ================= */}
+
                   <div className="p-2 bg-white rounded-lg border border-emerald-100">
 
                     <p className="text-[10px] text-slate-400 font-semibold uppercase">
@@ -224,7 +280,8 @@ export default function Dashboard({
                   </div>
 
 
-                  {/* CO2 */}
+                  {/* ================= CO2 ================= */}
+
                   <div className="p-2 bg-white rounded-lg border border-emerald-100">
 
                     <p className="text-[10px] text-slate-400 font-semibold uppercase">
@@ -238,7 +295,8 @@ export default function Dashboard({
                   </div>
 
 
-                  {/* RUNOFF */}
+                  {/* ================= RUNOFF ================= */}
+
                   <div className="p-2 bg-white rounded-lg border border-emerald-100">
 
                     <p className="text-[10px] text-slate-400 font-semibold uppercase">
@@ -261,7 +319,10 @@ export default function Dashboard({
 
         ) : (
 
-          /* ================= NOTHING SELECTED ================= */
+          /* ==================================================
+             NO CELL SELECTED
+          ================================================== */
+
           <div className="h-48 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center p-6 text-center bg-slate-50">
 
             <HelpCircle className="w-8 h-8 text-slate-300 mb-2" />
@@ -282,7 +343,10 @@ export default function Dashboard({
       </div>
 
 
-      {/* ================= OPTIMIZER BUTTON ================= */}
+      {/* ==================================================
+          OPTIMIZER BUTTON
+      ================================================== */}
+
       <div className="p-5 border-t border-slate-100 bg-white shadow-md">
 
         <button
@@ -294,9 +358,11 @@ export default function Dashboard({
           {isOptimizing ? (
 
             <>
+
               <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
 
               Calculating Canopy Pathways...
+
             </>
 
           ) : (
