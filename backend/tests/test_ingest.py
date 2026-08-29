@@ -83,7 +83,9 @@ def test_normalise_joins_orphan_letter_token():
     # Stray single letter token, e.g. "objective o f mitigating".
     raw = "objective o f mitigating the biotic pressure"
     out = ingest.normalise_text(raw)
-    assert "objectiveof" in out
+    # The stray letter belongs to the word on its right. Closing both sides
+    # would give "objectiveof", which is a worse token than the original.
+    assert "objective of" in out
     assert "o f " not in out
 
 
@@ -268,3 +270,72 @@ def test_build_index_skips_missing_documents(
     chroma_dir = tmp_path / "chroma_db"
     monkeypatch.setattr(ingest, "_build_default_client", lambda: fake_embeddings)
     assert ingest.build_index(docs, chroma_dir=chroma_dir) == 0
+
+class TestOneLetterWordsSurvive:
+    """The reflow glue used to eat real one-letter words.
+
+    "and a minimum" became "andaminimum" in 300+ places, which turns a
+    searchable phrase into a junk BM25 token.
+    """
+
+    def test_article_a_is_not_glued(self):
+        assert ingest.normalise_text("How a roadside species is chosen") == (
+            "How a roadside species is chosen"
+        )
+        assert ingest.normalise_text("and a minimum of two rows") == "and a minimum of two rows"
+
+    def test_pronoun_i_is_not_glued(self):
+        assert ingest.normalise_text("where I noted the gap") == "where I noted the gap"
+
+    def test_reflow_letter_attaches_to_the_word_on_its_right(self):
+        assert ingest.normalise_text("provide s hade for the street") == (
+            "provide shade for the street"
+        )
+        assert ingest.normalise_text("the objective o f the plan") == (
+            "the objective of the plan"
+        )
+
+    def test_wrapped_lines_join_with_a_space(self):
+        assert ingest.normalise_text("and an\nexcellent tree") == "and an excellent tree"
+        assert ingest.normalise_text("planted in\nthe median") == "planted in the median"
+
+    def test_true_column_split_joins_without_a_space(self):
+        assert ingest.normalise_text("Br\nuhat Bengaluru") == "Bruhat Bengaluru"
+
+
+class TestMarkdownSource:
+    def test_sections_become_pages(self, tmp_path):
+        doc = tmp_path / "d.md"
+        doc.write_text("# Title\n\nintro para\n\n## One\n\nbody one\n\n## Two\n\nbody two\n")
+        sections = ingest.load_markdown(doc)
+        assert [n for n, _ in sections] == [1, 2, 3]
+        assert "body one" in sections[1][1]
+
+    def test_load_document_dispatches_on_suffix(self, tmp_path):
+        doc = tmp_path / "d.md"
+        doc.write_text("# T\n\n" + "x " * 200)
+        assert ingest.load_document(doc)
+        with pytest.raises(ValueError, match="unsupported"):
+            ingest.load_document(tmp_path / "d.docx")
+
+
+class TestKolkataSpeciesCoverage:
+    """The four municipal PDFs are procedural and name no Kolkata species.
+
+    Without a Kolkata-tagged species source, "what should I plant here"
+    retrieves Delhi and Bengaluru chunks while the city boost pushes the
+    other way. This guards the source that closes the gap.
+    """
+
+    def test_kolkata_source_names_the_demo_species(self):
+        docs = Path(__file__).resolve().parents[1] / "documents"
+        path = docs / "kolkata_avenue_trees.md"
+        if not path.exists():
+            pytest.skip("corpus not present")
+        chunks = ingest.chunk_document(
+            ingest.load_document(path), "Avenue Trees for Kolkata", path.name, "Kolkata"
+        )
+        blob = " ".join(c["text"] for c in chunks).lower()
+        for species in ("neem", "azadirachta", "gulmohar", "bakul", "peepal"):
+            assert species in blob, f"{species} missing from the Kolkata source"
+        assert all(c["city"] == "Kolkata" for c in chunks)

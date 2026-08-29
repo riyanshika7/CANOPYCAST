@@ -23,6 +23,14 @@ CHROMA_DIR = str(Path(__file__).resolve().parent.parent / "chroma_db")
 COLLECTION = "forestry"
 EMBED_BATCH = 100
 MIN_CHUNK_CHARS = 200
+# A trailing run shorter than this is treated as a split word, not a whole one,
+# unless it is one of the short words below that legitimately end a wrapped line.
+_FRAGMENT_MAX_CHARS = 3
+_SHORT_WORDS = frozenset(
+    """a an as at be by do for he i if in is it its no nor of on or so the to up
+    us we and are but can had has her him his how its may non not off our out per
+    she that the them they this was who why you""".split()
+)
 EMBED_MODEL_ENV = "CANOPYCAST_EMBED_MODEL"
 OPENAI_KEY_ENV = "OPENAI_API_KEY"
 DEFAULT_EMBED_MODEL = "text-embedding-3-small"
@@ -43,6 +51,10 @@ DOC_META: dict[str, tuple[str, str]] = {
         "Punjab",
     ),
     "wb_tpofa_guidelines.pdf": ("West Bengal TPOFA Guidelines", "Kolkata"),
+    # The four municipal PDFs are procedural. None of them names a species
+    # suited to Kolkata, so a question about what to plant here retrieved
+    # Delhi and Bengaluru chunks. This reference closes that gap.
+    "kolkata_avenue_trees.md": ("Avenue Trees for Kolkata", "Kolkata"),
 }
 
 
@@ -58,11 +70,17 @@ _MULTISPACE_RE = re.compile(r"[ \t\f\v]+")
 _MULTINEW_RE = re.compile(r"\n{3,}")
 # Bare page number on its own line, e.g. "2", " 2 ", "  3  "
 _BARE_PAGE_RE = re.compile(r"^\s*\d{1,4}\s*$", re.MULTILINE)
-# A lone single-letter token wedged between letter/bracket characters: the
-# PDF column reflow has split one word across two visual positions. Glue
-# without inserting a space. Targets "objective o f", "provide s".
+# A lone single-letter token wedged between letter characters: the PDF column
+# reflow split one word across two visual positions. The stray letter belongs to
+# the word on its RIGHT, so keep the left space and close the right one:
+# "objective o f" -> "objective of", "provide s hade" -> "provide shade".
+# Closing both sides instead would give "objectiveof", which is a worse token
+# than the one it replaced.
+# "a" and "I" are real one-letter words, so gluing them wrecks ordinary prose:
+# "and a minimum" became "andaminimum" across 300+ places in the corpus, which
+# poisons the BM25 tokens. Skip those two and glue only true reflow fragments.
 _SINGLE_LETTER_GLUE = re.compile(
-    r"(?<=[A-Za-z(])\s([A-Za-z])\s(?=[A-Za-z)])"
+    r"(?<=[A-Za-z(])\s(?![aAI]\s)([A-Za-z])\s(?=[A-Za-z)])"
 )
 # Bracket followed by a word with no separating space: ")may" -> ") may"
 _BRACKET_WORD = re.compile(r"\)(?=[A-Za-z])")
@@ -93,7 +111,7 @@ def normalise_text(text: str) -> str:
     # so cross-line defects are easiest to handle here.
     out = _join_broken_lines(out)
     # then in-line cleanups within what's now a single paragraph
-    out = _SINGLE_LETTER_GLUE.sub(r"\1", out)
+    out = _SINGLE_LETTER_GLUE.sub(r" \1", out)
     out = _WORD_BRACKET.sub(")", out)
     out = _BRACKET_WORD.sub(") ", out)
 
@@ -133,9 +151,20 @@ def _join_broken_lines(text: str) -> str:
         if m_keep:
             out[-1] = prev + line.lstrip()
             continue
-        # mid-word line break (no hyphen): glue when both ends are letters
+        # Line ends with a letter and the next starts with one. That is USUALLY
+        # ordinary word wrapping, not a split word: measured over the corpus this
+        # case fires 1959 times and 86% of them end in a complete word. Gluing
+        # them all turned "and an excellent" into "anexcellent". So join with a
+        # space by default, and only glue when the trailing fragment is too
+        # short to be a word, which is the column-reflow case ("Br" + "uhat").
         if prev and prev[-1].isalpha() and line and line[0].isalpha():
-            out[-1] = prev + line.lstrip()
+            fragment = re.split(r"\s", prev)[-1]
+            split_word = (
+                len(fragment) < _FRAGMENT_MAX_CHARS
+                and fragment.lower() not in _SHORT_WORDS
+            )
+            joiner = "" if split_word else " "
+            out[-1] = prev + joiner + line.lstrip()
             continue
         out.append(line)
     return "\n".join(out)
@@ -149,6 +178,37 @@ def load_pdf(path: str | Path) -> list[tuple[int, str]]:
         raw = page.extract_text() or ""
         pages.append((i + 1, normalise_text(raw)))
     return pages
+
+
+def load_markdown(path: str | Path) -> list[tuple[int, str]]:
+    """Read a markdown file into (section_number, text) pairs.
+
+    Markdown has no pages, so each top-level section becomes one unit and its
+    index stands in for a page number. A citation then points at a section
+    rather than at the whole file.
+    """
+    text = Path(path).read_text(encoding="utf-8")
+    sections: list[tuple[int, str]] = []
+    current: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("## ") and current:
+            sections.append((len(sections) + 1, normalise_text("\n".join(current))))
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        sections.append((len(sections) + 1, normalise_text("\n".join(current))))
+    return sections
+
+
+def load_document(path: str | Path) -> list[tuple[int, str]]:
+    """Dispatch to the loader for this file type."""
+    suffix = Path(path).suffix.lower()
+    if suffix == ".pdf":
+        return load_pdf(path)
+    if suffix in (".md", ".txt"):
+        return load_markdown(path)
+    raise ValueError(f"unsupported document type: {suffix}")
 
 
 def chunk_document(
@@ -229,8 +289,9 @@ def build_index(
     documents_dir: str | Path,
     chroma_dir: str | Path = CHROMA_DIR,
     client: chromadb.PersistentClient | None = None,
+    embed_client=None,
 ) -> int:
-    """Build the persistent Chroma index from every PDF in documents_dir."""
+    """Build the persistent Chroma index from every known document."""
     client = client or chromadb.PersistentClient(path=str(chroma_dir))
     collection = client.get_or_create_collection(
         name=COLLECTION, metadata={"hnsw:space": "cosine"}
@@ -243,11 +304,11 @@ def build_index(
         if not path.exists():
             continue
         doc_title, city = DOC_META[source_file]
-        pages = load_pdf(path)
+        pages = load_document(path)
         chunks = chunk_document(pages, doc_title, source_file, city)
         if not chunks:
             continue
-        vectors = embed_texts([c["text"] for c in chunks])
+        vectors = embed_texts([c["text"] for c in chunks], client=embed_client)
         collection.upsert(
             ids=[c["id"] for c in chunks],
             documents=[c["text"] for c in chunks],
