@@ -1,12 +1,31 @@
+# Dependencies
+node_modules/
+**/node_modules/
 
-# local dev tooling, not part of the submission
-fleet.config.yaml
-.marshal*/
-backend/.venv/
-backend/.env
-backend/*.db
+# Build output
+dist/
+**/dist/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Python
 __pycache__/
-*.pyc
-.ledger/
-.ledger/
-backend/chroma_db/
+*.py[cod]
+.venv/
+venv/
+
+# SQLite database
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
