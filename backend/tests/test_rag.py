@@ -1,3 +1,4 @@
+import json
 import sys
 import time
 from pathlib import Path
@@ -7,8 +8,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.rag import Retriever, SessionStore, answer
-from app.schema import Cell, ChatRequest
+from app.rag import Retriever, SessionStore, answer, recommend_trees
+from app.schema import Cell, ChatRequest, TreeRecommendation
 
 
 class FakeCollection:
@@ -226,3 +227,124 @@ def test_answer_requires_openai_api_key(monkeypatch):
     req = ChatRequest(message="Neem", session_id="s", city="Kolkata")
     with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
         answer(req, retriever, SessionStore(), client=None)
+
+
+def _neem_rec(**overrides):
+    row = {
+        "common_name": "Neem",
+        "botanical_name": "Azadirachta indica",
+        "crown_shape": "roundish",
+        "mature_height_ft": 40,
+        "why_here": "Hot cell at 38.7 C with 11.5 percent canopy needs dense shade.",
+        "caution": "brittle branches in storms",
+    }
+    row.update(overrides)
+    return row
+
+
+def _gulmohar_rec(**overrides):
+    row = {
+        "common_name": "Gulmohar",
+        "botanical_name": "Delonix regia",
+        "crown_shape": "umbrella",
+        "mature_height_ft": None,
+        "why_here": "Avenue tree for hot streets with low canopy.",
+        "caution": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_recommend_trees_maps_well_formed_with_citations():
+    payload = {"recommendations": [_neem_rec()]}
+    client = FakeClient(chat_content=json.dumps(payload))
+    retriever = Retriever(
+        collection=FakeCollection(_records(), dense_order=["a", "d", "b"]),
+        client=client,
+    )
+    resp = recommend_trees("Kolkata", _cell(), retriever, client=client, n=3)
+    assert len(resp.recommendations) == 1
+    rec = resp.recommendations[0]
+    assert isinstance(rec, TreeRecommendation)
+    assert rec.common_name == "Neem"
+    assert rec.botanical_name == "Azadirachta indica"
+    assert rec.citations, "species citations should come from retrieved chunks"
+    assert rec.citations[0].doc_title == "WB Urban Forestry Guidelines"
+    assert rec.citations[0].page == 4
+    assert rec.citations[0].snippet
+    assert len(rec.citations[0].snippet) <= 200
+    assert resp.sources
+    assert {s.doc_title for s in resp.sources} >= {"WB Urban Forestry Guidelines"}
+    assert resp.city == "Kolkata"
+    assert resp.cell_id == "3_5"
+
+
+def test_recommend_trees_skips_malformed_entry():
+    payload = {
+        "recommendations": [
+            _neem_rec(),
+            {"common_name": 123, "why_here": None},
+            _gulmohar_rec(),
+        ]
+    }
+    client = FakeClient(chat_content=json.dumps(payload))
+    retriever = Retriever(
+        collection=FakeCollection(_records(), dense_order=["a", "d", "b"]),
+        client=client,
+    )
+    resp = recommend_trees("Kolkata", None, retriever, client=client, n=3)
+    names = [r.common_name for r in resp.recommendations]
+    assert names == ["Neem", "Gulmohar"]
+
+
+def test_recommend_unparseable_json_raises_value_error():
+    client = FakeClient(chat_content="this is not json {")
+    retriever = Retriever(
+        collection=FakeCollection(_records(), dense_order=["a"]),
+        client=client,
+    )
+    with pytest.raises(ValueError) as ei:
+        recommend_trees("Kolkata", None, retriever, client=client)
+    assert type(ei.value) is ValueError
+    assert "JSON" in str(ei.value) or "json" in str(ei.value).lower()
+
+
+def test_recommend_bare_json_array_is_handled():
+    client = FakeClient(chat_content=json.dumps([_neem_rec(), _gulmohar_rec()]))
+    retriever = Retriever(
+        collection=FakeCollection(_records(), dense_order=["a", "d"]),
+        client=client,
+    )
+    resp = recommend_trees("Kolkata", None, retriever, client=client, n=3)
+    assert [r.common_name for r in resp.recommendations] == ["Neem", "Gulmohar"]
+
+
+def test_recommend_prompt_includes_cell_numbers():
+    client = FakeClient(chat_content=json.dumps({"recommendations": []}))
+    retriever = Retriever(
+        collection=FakeCollection(_records(), dense_order=["a", "d", "b"]),
+        client=client,
+    )
+    recommend_trees("Kolkata", _cell(), retriever, client=client)
+    blob = " ".join(m["content"] for m in client.messages)
+    assert "38.7" in blob
+    assert "11.5" in blob
+    assert "High" in blob
+
+
+def test_recommend_parses_height_about_40_feet_and_missing():
+    payload = {
+        "recommendations": [
+            _neem_rec(mature_height_ft="about 40 feet"),
+            _gulmohar_rec(mature_height_ft=None),
+        ]
+    }
+    client = FakeClient(chat_content=json.dumps(payload))
+    retriever = Retriever(
+        collection=FakeCollection(_records(), dense_order=["a", "d"]),
+        client=client,
+    )
+    resp = recommend_trees("Kolkata", None, retriever, client=client)
+    by_name = {r.common_name: r for r in resp.recommendations}
+    assert by_name["Neem"].mature_height_ft == 40.0
+    assert by_name["Gulmohar"].mature_height_ft is None
