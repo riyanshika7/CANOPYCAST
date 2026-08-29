@@ -1,0 +1,12 @@
+
+# local dev tooling, not part of the submission
+fleet.config.yaml
+.marshal*/
+backend/.venv/
+backend/.env
+backend/*.db
+__pycache__/
+*.pyc
+.ledger/
+.ledger/
+backend/chroma_db/
