@@ -6,9 +6,12 @@ embeds via OpenAI, and persists into ChromaDB at backend/chroma_db in the
 """
 from __future__ import annotations
 
+import argparse
+import hashlib
 import os
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import chromadb
 from chromadb.api.models.Collection import Collection
@@ -65,6 +68,7 @@ _splitter = RecursiveCharacterTextSplitter(
 )
 
 
+_TOKEN_SPLIT = re.compile(r"[a-z0-9]+")
 _DOT_LEADER_RE = re.compile(r"\.{3,}")
 _MULTISPACE_RE = re.compile(r"[ \t\f\v]+")
 _MULTINEW_RE = re.compile(r"\n{3,}")
@@ -285,6 +289,39 @@ def _get_collection(client: chromadb.PersistentClient | None = None) -> Collecti
     )
 
 
+class HashingEmbedder:
+    """Offline stand-in for the OpenAI embeddings client.
+
+    Hashes tokens into a fixed-width bag-of-words vector. The vectors carry no
+    semantics, so dense ranking is meaningless with these, but the rest of the
+    pipeline is exercised for real: chunking, storage, BM25, fusion, citations.
+    That lets the team build an index and click through the app before an API
+    key exists. Never use it to judge answer quality.
+    """
+
+    DIM = 256
+
+    class _Embeddings:
+        def create(self, model=None, input=None, **kwargs):
+            texts = [input] if isinstance(input, str) else list(input)
+            vectors = []
+            for text in texts:
+                vec = [0.0] * HashingEmbedder.DIM
+                for token in _TOKEN_SPLIT.findall(text.lower()):
+                    digest = hashlib.blake2b(
+                        token.encode("utf-8"), digest_size=8
+                    ).hexdigest()
+                    vec[int(digest, 16) % HashingEmbedder.DIM] += 1.0
+                norm = sum(v * v for v in vec) ** 0.5 or 1.0
+                vectors.append([v / norm for v in vec])
+            return SimpleNamespace(
+                data=[SimpleNamespace(embedding=v) for v in vectors]
+            )
+
+    def __init__(self):
+        self.embeddings = self._Embeddings()
+
+
 def build_index(
     documents_dir: str | Path,
     chroma_dir: str | Path = CHROMA_DIR,
@@ -329,8 +366,26 @@ def build_index(
 
 
 if __name__ == "__main__":
-    here = Path(__file__).resolve().parent
-    backend_root = here.parent
-    docs = backend_root / "documents"
-    n = build_index(docs, chroma_dir=backend_root / "chroma_db")
-    print(f"Indexed {n} chunks into {COLLECTION} at {CHROMA_DIR}")
+    parser = argparse.ArgumentParser(description="Build the forestry vector index.")
+    parser.add_argument(
+        "--fake-embeddings",
+        action="store_true",
+        help=(
+            "Build with offline hashed vectors instead of calling OpenAI. "
+            "Exercises the whole pipeline with no API key. Retrieval quality "
+            "is NOT representative, so never demo answers from such an index."
+        ),
+    )
+    args = parser.parse_args()
+
+    backend_root = Path(__file__).resolve().parent.parent
+    embedder = HashingEmbedder() if args.fake_embeddings else None
+    if args.fake_embeddings:
+        print("WARNING: hashed offline vectors. Retrieval quality is not real.")
+
+    count = build_index(
+        backend_root / "documents",
+        chroma_dir=backend_root / "chroma_db",
+        embed_client=embedder,
+    )
+    print(f"Indexed {count} chunks into '{COLLECTION}' at {CHROMA_DIR}")
