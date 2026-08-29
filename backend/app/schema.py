@@ -70,6 +70,32 @@ class Citation(BaseModel):
     snippet: str
 
 
+class TreeRecommendation(BaseModel):
+    """One species suggestion, structured so the sidebar can render a card.
+
+    Distinct from the chat answer on purpose: chat is prose for a human reading
+    it, this is fields the dashboard lays out.
+    """
+    common_name: str
+    botanical_name: Optional[str] = None
+    crown_shape: Optional[str] = Field(
+        default=None, description="roundish, umbrella, or columnar"
+    )
+    mature_height_ft: Optional[float] = None
+    why_here: str = Field(description="one line tying the species to this cell")
+    caution: Optional[str] = Field(
+        default=None, description="storm risk, litter, root spread, if the source says so"
+    )
+    citations: list["Citation"] = Field(default_factory=list)
+
+
+class RecommendResponse(BaseModel):
+    city: str
+    cell_id: Optional[str] = None
+    recommendations: list[TreeRecommendation]
+    sources: list["Citation"] = Field(default_factory=list)
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str
