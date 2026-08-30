@@ -5,6 +5,7 @@ wiring: that routes return the documented status codes and response shapes,
 that the lifespan hook seeds the grid, and that the documented degraded
 behaviour holds when no corpus and no API key are present.
 """
+import json
 import math
 from pathlib import Path
 
@@ -397,3 +398,60 @@ def test_chat_over_budget_is_429_not_502(client: TestClient, monkeypatch) -> Non
     response = client.post("/api/chat", json={"message": "hi"})
     assert response.status_code == 429
     assert "budget" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Streaming chat
+# ---------------------------------------------------------------------------
+
+
+def _sse_events(response):
+    out = []
+    for line in response.text.splitlines():
+        if line.startswith("data: "):
+            out.append(json.loads(line[6:]))
+    return out
+
+
+def test_chat_stream_emits_tokens_then_citations_then_done(client, monkeypatch):
+    from app import main as main_module
+    import app.rag as rag_module
+    from app.schema import Citation
+
+    def fake_stream(req, retriever, store, client=None):
+        yield "token", "Plant "
+        yield "token", "Neem."
+        yield "citations", [Citation(doc_title="Avenue Trees for Kolkata", page=3, snippet="x")]
+
+    monkeypatch.setattr(main_module, "_get_rag", lambda: (object(), object()))
+    monkeypatch.setattr(rag_module, "answer_stream", fake_stream)
+
+    response = client.post("/api/chat/stream", json={"message": "hi"})
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+
+    events = _sse_events(response)
+    assert "".join(e["token"] for e in events if "token" in e) == "Plant Neem."
+    assert events[-1] == {"done": True}
+    citations = [e for e in events if "citations" in e]
+    assert len(citations) == 1
+    assert citations[0]["citations"][0]["doc_title"] == "Avenue Trees for Kolkata"
+
+
+def test_chat_stream_reports_a_late_failure_in_band(client, monkeypatch):
+    """The 200 is already sent once the first token goes out, so a failure
+    after that cannot be a status code."""
+    from app import main as main_module
+    import app.rag as rag_module
+
+    def fake_stream(req, retriever, store, client=None):
+        yield "token", "Plant "
+        raise RuntimeError("upstream died")
+
+    monkeypatch.setattr(main_module, "_get_rag", lambda: (object(), object()))
+    monkeypatch.setattr(rag_module, "answer_stream", fake_stream)
+
+    events = _sse_events(client.post("/api/chat/stream", json={"message": "hi"}))
+    assert events[0] == {"token": "Plant "}
+    assert "upstream died" in events[-1]["error"]
+    assert not any("done" in e for e in events)

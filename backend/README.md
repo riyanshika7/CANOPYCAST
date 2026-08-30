@@ -97,6 +97,28 @@ Fusion. Lexical is not optional: queries are dominated by exact species tokens
 Answers are grounded in the selected map cell, so the same question against a
 41 C bare block and a shaded park block gives different advice.
 
+## Streaming
+
+`POST /api/chat/stream` returns the same answer as `/api/chat` as server-sent
+events: `{"token": "..."}` repeatedly, then `{"citations": [...]}` once, then
+`{"done": true}`. A failure after the first token arrives as `{"error": "..."}`,
+because the 200 has already been sent by then.
+
+Measured against the live API, three questions each:
+
+| | median |
+|---|---|
+| first token, streamed | 3.69s |
+| whole answer, buffered | 5.15s |
+| whole answer, streamed | 5.06s |
+
+So the reader sees the first words about 1.5s earlier and the answer finishes
+at the same time. The floor is the model: retrieval is 0.41s of a 5s turn, and
+most of the wait is the model thinking before it writes a single token. Nothing
+on this side of the API call moves that.
+
+`/api/chat` is unchanged. A client that cannot read a stream should keep using it.
+
 ## Spend ceiling
 
 The chat route is reachable by anyone who can reach the API, and one chat turn

@@ -351,12 +351,12 @@ def _search_query(
     return " ".join(prior + [message] + expansion).strip()
 
 
-def answer(
-    req: ChatRequest,
-    retriever: Retriever,
-    store: SessionStore,
-    client=None,
-) -> ChatResponse:
+def _prepare_turn(req: ChatRequest, retriever: Retriever, store: SessionStore, client):
+    """Everything both the buffered and the streaming route do identically.
+
+    Split out so the two cannot drift: a prompt change that lands in one and
+    not the other is the kind of bug that only shows up in a demo.
+    """
     session = store.get(req.session_id)
     if req.selected_cell is not None:
         store.set_context(req.session_id, req.selected_cell)
@@ -374,13 +374,11 @@ def answer(
     if client is None:
         client = _real_openai_client()
     model = os.environ.get("CANOPYCAST_CHAT_MODEL", "gpt-5.6-luna")
-    BUDGET.check()
-    resp = client.chat.completions.create(model=model, messages=messages)
-    BUDGET.record(resp)
-    text = (resp.choices[0].message.content or "").strip()
-    store.append(req.session_id, "user", req.message)
-    store.append(req.session_id, "assistant", text)
-    citations = [
+    return messages, chunks, client, model
+
+
+def _citations(chunks: list[dict]) -> list[Citation]:
+    return [
         Citation(
             doc_title=str(chunk.get("doc_title", "")),
             page=int(chunk.get("page", 0) or 0),
@@ -388,7 +386,64 @@ def answer(
         )
         for chunk in chunks
     ]
-    return ChatResponse(response=text, citations=citations)
+
+
+def answer_stream(
+    req: ChatRequest,
+    retriever: Retriever,
+    store: SessionStore,
+    client=None,
+):
+    """Yield the answer in pieces, then the citations.
+
+    A full answer takes about 5 seconds, and roughly 4.6 of those are the model
+    writing it. Retrieval is under half a second, so there is no version of
+    this that is fast: the only thing left is to stop making the reader wait
+    for the last word before showing the first.
+
+    Yields ("token", text) repeatedly, then exactly one ("citations", list) at
+    the end. Citations come last because they describe the chunks the whole
+    answer drew on, and the caller needs the stream to have finished to know
+    the turn was not cut short.
+    """
+    messages, chunks, client, model = _prepare_turn(req, retriever, store, client)
+    BUDGET.check()
+    stream = client.chat.completions.create(
+        model=model, messages=messages, stream=True
+    )
+    parts: list[str] = []
+    for event in stream:
+        choices = getattr(event, "choices", None) or []
+        if not choices:
+            continue
+        piece = getattr(choices[0].delta, "content", None)
+        if piece:
+            parts.append(piece)
+            yield "token", piece
+    text = "".join(parts).strip()
+    # A streamed response reports usage only on the final event, and only when
+    # asked. Count the call either way so streaming is not a way around the
+    # ceiling.
+    BUDGET.record(getattr(stream, "usage", None) or object())
+    store.append(req.session_id, "user", req.message)
+    store.append(req.session_id, "assistant", text)
+    yield "citations", _citations(chunks)
+
+
+def answer(
+    req: ChatRequest,
+    retriever: Retriever,
+    store: SessionStore,
+    client=None,
+) -> ChatResponse:
+    messages, chunks, client, model = _prepare_turn(req, retriever, store, client)
+    BUDGET.check()
+    resp = client.chat.completions.create(model=model, messages=messages)
+    BUDGET.record(resp)
+    text = (resp.choices[0].message.content or "").strip()
+    store.append(req.session_id, "user", req.message)
+    store.append(req.session_id, "assistant", text)
+    return ChatResponse(response=text, citations=_citations(chunks))
 
 
 _HEIGHT_NUM = re.compile(r"(\d+(?:\.\d+)?)")

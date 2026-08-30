@@ -412,3 +412,47 @@ def test_search_query_grounds_a_deictic_question():
                       {"canopy_cover": 4.0, "base_temperature": 41.7})
     assert q.startswith("what should we plant here")
     assert "Kolkata" in q and "heat tolerant" in q
+
+
+class _FakeStreamClient:
+    """Mimics the shape of an OpenAI streaming response."""
+
+    def __init__(self, pieces):
+        self._pieces = pieces
+        self.chat = self
+
+    @property
+    def completions(self):
+        return self
+
+    def create(self, model, messages, stream=False, **kwargs):
+        assert stream is True
+        def gen():
+            for piece in self._pieces:
+                delta = type("D", (), {"content": piece})()
+                choice = type("C", (), {"delta": delta})()
+                yield type("E", (), {"choices": [choice]})()
+        return gen()
+
+
+def test_answer_stream_yields_tokens_then_one_citations_event():
+    from app.rag import answer_stream
+
+    retriever = Retriever(collection=FakeCollection(_records(), dense_order=['a','b','c','d']), client=FakeClient())
+    store = SessionStore()
+    req = ChatRequest(message="what to plant", session_id="s1", city="Kolkata")
+    events = list(answer_stream(req, retriever=retriever, store=store,
+                                client=_FakeStreamClient(["Plant ", "Neem."])))
+    kinds = [k for k, _ in events]
+    assert kinds == ["token", "token", "citations"]
+
+
+def test_answer_stream_records_history_for_the_next_turn():
+    from app.rag import answer_stream
+
+    store = SessionStore()
+    req = ChatRequest(message="what to plant", session_id="s2", city="Kolkata")
+    list(answer_stream(req, retriever=Retriever(collection=FakeCollection(_records(), dense_order=['a','b','c','d']), client=FakeClient()), store=store,
+                       client=_FakeStreamClient(["Bakul."])))
+    turns = store.get("s2").turns
+    assert turns[-2:] == [("user", "what to plant"), ("assistant", "Bakul.")]
