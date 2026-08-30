@@ -19,6 +19,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openai import OpenAI
 from pypdf import PdfReader
 
+# Imported for the side effect: config loads backend/.env. Without it this
+# module reads a bare environment and the CLI cannot see the API key, even
+# though the server can, because main.py imports config first.
+from . import config  # noqa: F401
+
 
 # Absolute, so it resolves the same from the repo root, from backend/, and
 # from inside a marshal worktree. rag.py reads this exact directory.

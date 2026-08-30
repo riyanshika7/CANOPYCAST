@@ -12,6 +12,10 @@ from typing import Optional
 from pydantic import ValidationError
 from rank_bm25 import BM25Okapi
 
+# Same reason as ingest: loads backend/.env so this module works when it is
+# imported outside the server.
+from . import config  # noqa: F401
+
 from .schema import (
     Cell,
     ChatRequest,
@@ -27,6 +31,8 @@ DEFAULT_K = 5
 TURN_LIMIT = 6
 SNIPPET_CHARS = 200
 CITY_BOOST = 2.0
+# No single document may supply more than this many of the k returned chunks.
+MAX_PER_DOC = 2
 CHROMA_DIR = Path(__file__).resolve().parent.parent / "chroma_db"
 COLLECTION_NAME = "forestry"
 _TOKEN = re.compile(r"[a-z0-9]+")
@@ -191,7 +197,32 @@ class Retriever:
                 if chunk_city in (city, "General"):
                     scores[doc_id] *= CITY_BOOST
         ordered = sorted(scores, key=lambda d: scores[d], reverse=True)
-        return [self._hit(doc_id) for doc_id in ordered[:k] if doc_id in self._by_id]
+        return [self._hit(doc_id) for doc_id in self._cap_per_doc(ordered, k)]
+
+    def _cap_per_doc(self, ordered: list[str], k: int) -> list[str]:
+        """Keep at most MAX_PER_DOC chunks from any one document.
+
+        The Kolkata source is 5 chunks against 386 from Bengaluru, so the city
+        boost lifted the same three chunks to the top of every query and pushed
+        out the maintenance and approval pages that actually answered some of
+        them. Capping keeps the local source present without letting it own the
+        whole window. Overflow is appended only if the cap leaves room spare.
+        """
+        picked: list[str] = []
+        overflow: list[str] = []
+        seen: dict[str, int] = {}
+        for doc_id in ordered:
+            if doc_id not in self._by_id:
+                continue
+            title = (self._by_id[doc_id][1] or {}).get("doc_title", "")
+            if seen.get(title, 0) < MAX_PER_DOC:
+                seen[title] = seen.get(title, 0) + 1
+                picked.append(doc_id)
+                if len(picked) == k:
+                    return picked
+            elif len(overflow) < k:
+                overflow.append(doc_id)
+        return (picked + overflow)[:k]
 
 
 @dataclass
@@ -274,9 +305,39 @@ def _user_payload(req: ChatRequest, cell_data: dict, chunks: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-def _search_query(message: str, turns: list[tuple[str, str]]) -> str:
+# A planner clicks a cell and asks "which trees should we plant here". The words
+# that carry the meaning are on the map, not in the sentence, so the raw message
+# retrieves on "trees" and "plant" alone and matches consent letters and nursery
+# procedure. Expanding the query with the selection is what makes the retrieval
+# local. Kept short: long expansions drown the user's own words in BM25.
+_CANOPY_LOW_PCT = 25.0
+_HOT_CELSIUS = 38.0
+
+
+def _query_expansion(city: Optional[str], cell_data: dict | None) -> list[str]:
+    terms: list[str] = []
+    if city:
+        terms.append(city)
+    if not cell_data:
+        return terms
+    canopy = cell_data.get("canopy_cover")
+    if isinstance(canopy, (int, float)) and canopy < _CANOPY_LOW_PCT:
+        terms.append("shade canopy cover")
+    temperature = cell_data.get("base_temperature")
+    if isinstance(temperature, (int, float)) and temperature > _HOT_CELSIUS:
+        terms.append("heat tolerant")
+    return terms
+
+
+def _search_query(
+    message: str,
+    turns: list[tuple[str, str]],
+    city: Optional[str] = None,
+    cell_data: dict | None = None,
+) -> str:
     prior = [text for role, text in turns if role == "user"]
-    return " ".join(prior + [message]).strip()
+    expansion = _query_expansion(city, cell_data)
+    return " ".join(prior + [message] + expansion).strip()
 
 
 def answer(
@@ -291,7 +352,9 @@ def answer(
         session = store.get(req.session_id)
     cell_data = _cell_dict(req.selected_cell) or session.planning_context
     chunks = retriever.search(
-        _search_query(req.message, session.turns), city=req.city, k=DEFAULT_K
+        _search_query(req.message, session.turns, req.city, cell_data),
+        city=req.city,
+        k=DEFAULT_K,
     )
     messages = [{"role": "system", "content": _system_prompt(req.city, bool(cell_data))}]
     for role, text in session.turns:

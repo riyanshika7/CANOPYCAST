@@ -29,3 +29,5 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+# Vector index, rebuilt by python -m app.ingest
+backend/chroma_db/

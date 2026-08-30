@@ -118,3 +118,16 @@ docker run --rm -e OPENAI_API_KEY=... \
   -v chroma_data:/home/appuser/app/chroma_db \
   canopycast-api python -m app.ingest
 ```
+
+Then serve with the same volume and key attached, or health reports
+`corpus_ready: false` and chat answers 503:
+
+```bash
+docker run -p 8000:8000 -e OPENAI_API_KEY=... \
+  -v chroma_data:/home/appuser/app/chroma_db \
+  canopycast-api
+```
+
+The mount path is `/home/appuser/app/chroma_db`, not `/app/chroma_db`. Mounting
+the wrong path fails quietly: the container still starts and reports healthy,
+because a missing index is a 503 on two routes rather than a boot failure.

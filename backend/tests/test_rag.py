@@ -8,7 +8,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.rag import Retriever, SessionStore, answer, recommend_trees
+from app.rag import (
+    MAX_PER_DOC,
+    Retriever,
+    SessionStore,
+    _query_expansion,
+    _search_query,
+    answer,
+    recommend_trees,
+)
 from app.schema import Cell, ChatRequest, TreeRecommendation
 
 
@@ -348,3 +356,59 @@ def test_recommend_parses_height_about_40_feet_and_missing():
     by_name = {r.common_name: r for r in resp.recommendations}
     assert by_name["Neem"].mature_height_ft == 40.0
     assert by_name["Gulmohar"].mature_height_ft is None
+
+
+def _stub_by_id(spec):
+    """spec: list of (doc_id, doc_title). Builds the _by_id shape search uses."""
+    return {doc_id: ("text for " + doc_id, {"doc_title": title, "page": 1})
+            for doc_id, title in spec}
+
+
+def test_cap_per_doc_limits_one_document():
+    r = Retriever.__new__(Retriever)
+    r._by_id = _stub_by_id([(f"a{i}", "Big Manual") for i in range(6)]
+                           + [("b0", "Kolkata Doc"), ("c0", "Punjab Doc")])
+    # k=4 is exactly what the cap can supply from three documents, so nothing
+    # is backfilled and the cap is visible on its own.
+    picked = r._cap_per_doc([f"a{i}" for i in range(6)] + ["b0", "c0"], k=4)
+    titles = [r._by_id[d][1]["doc_title"] for d in picked]
+    assert titles.count("Big Manual") == MAX_PER_DOC
+    assert "Kolkata Doc" in titles and "Punjab Doc" in titles
+
+
+def test_cap_per_doc_backfills_rather_than_returning_fewer():
+    # Capping must never shrink the window: k=5 from the same three documents
+    # can only be filled by going back over the capped document.
+    r = Retriever.__new__(Retriever)
+    r._by_id = _stub_by_id([(f"a{i}", "Big Manual") for i in range(6)]
+                           + [("b0", "Kolkata Doc"), ("c0", "Punjab Doc")])
+    picked = r._cap_per_doc([f"a{i}" for i in range(6)] + ["b0", "c0"], k=5)
+    assert len(picked) == 5
+    assert len(set(picked)) == 5
+
+
+def test_cap_per_doc_backfills_when_short():
+    # Only one document exists, so the cap must not return fewer than k.
+    r = Retriever.__new__(Retriever)
+    r._by_id = _stub_by_id([(f"a{i}", "Only Doc") for i in range(5)])
+    assert len(r._cap_per_doc([f"a{i}" for i in range(5)], k=5)) == 5
+
+
+def test_query_expansion_needs_a_cell():
+    assert _query_expansion("Kolkata", None) == ["Kolkata"]
+    assert _query_expansion(None, None) == []
+
+
+def test_query_expansion_reflects_cell_conditions():
+    hot_bare = _query_expansion("Kolkata", {"canopy_cover": 4.0, "base_temperature": 41.7})
+    assert "shade canopy cover" in hot_bare and "heat tolerant" in hot_bare
+    cool_green = _query_expansion("Kolkata", {"canopy_cover": 60.0, "base_temperature": 30.0})
+    assert cool_green == ["Kolkata"]
+
+
+def test_search_query_grounds_a_deictic_question():
+    # "plant here" carries no retrievable terms; the cell has to supply them.
+    q = _search_query("what should we plant here", [], "Kolkata",
+                      {"canopy_cover": 4.0, "base_temperature": 41.7})
+    assert q.startswith("what should we plant here")
+    assert "Kolkata" in q and "heat tolerant" in q
