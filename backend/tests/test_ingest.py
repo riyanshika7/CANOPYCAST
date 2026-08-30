@@ -339,3 +339,27 @@ class TestKolkataSpeciesCoverage:
         for species in ("neem", "azadirachta", "gulmohar", "bakul", "peepal"):
             assert species in blob, f"{species} missing from the Kolkata source"
         assert all(c["city"] == "Kolkata" for c in chunks)
+
+
+def test_every_registered_document_exists():
+    """A typo in DOC_META is skipped silently by build_index, so the corpus
+    loses a source and nothing reports it."""
+    from pathlib import Path
+
+    from app import config
+    from app.ingest import DOC_META
+
+    missing = [
+        name for name in DOC_META
+        if not (Path(config.DOCUMENTS_DIR) / name).exists()
+    ]
+    assert missing == []
+
+
+def test_kolkata_sources_outnumber_a_single_outside_manual():
+    """The corpus was 5 Kolkata chunks against 386 from Bengaluru, which is
+    what pushed local answers out of the retrieval window."""
+    from app.ingest import DOC_META
+
+    kolkata = [n for n, (_, city) in DOC_META.items() if city == "Kolkata"]
+    assert len(kolkata) >= 4

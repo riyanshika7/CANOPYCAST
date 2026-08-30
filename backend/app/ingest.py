@@ -63,6 +63,17 @@ DOC_META: dict[str, tuple[str, str]] = {
     # suited to Kolkata, so a question about what to plant here retrieved
     # Delhi and Bengaluru chunks. This reference closes that gap.
     "kolkata_avenue_trees.md": ("Avenue Trees for Kolkata", "Kolkata"),
+    # That reference still lists krishnachura and radhachura as avenue options.
+    # KMC stopped planting both after Amphan, so without this source the
+    # chatbot recommends species the city has ruled out.
+    "kolkata_amphan_plantation_policy.md": (
+        "Kolkata Plantation Policy After Amphan",
+        "Kolkata",
+    ),
+    "kolkata_low_carbon_roadmap.pdf": (
+        "Roadmap for Low Carbon Climate Resilient Kolkata",
+        "Kolkata",
+    ),
 }
 
 
