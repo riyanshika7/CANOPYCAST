@@ -370,3 +370,30 @@ def test_chat_anonymous_sessions_do_not_share_history(client: TestClient) -> Non
     first = ChatRequest(message="a").session_id
     second = ChatRequest(message="b").session_id
     assert first != second
+
+
+# ---------------------------------------------------------------------------
+# Budget ceiling
+# ---------------------------------------------------------------------------
+
+
+def test_health_reports_usage_against_the_ceiling(client: TestClient) -> None:
+    usage = client.get("/api/health").json()["usage"]
+    assert {"calls", "max_calls", "tokens", "max_tokens"} <= set(usage)
+
+
+def test_chat_over_budget_is_429_not_502(client: TestClient, monkeypatch) -> None:
+    """A spent budget is this process's own limit, not an upstream fault."""
+    from app import main as main_module
+    from app.budget import BudgetExceeded
+
+    def _spent(*args, **kwargs):
+        raise BudgetExceeded("call budget spent: 500 of 500")
+
+    monkeypatch.setattr(main_module, "_get_rag", lambda: (object(), object()))
+    import app.rag as rag_module
+
+    monkeypatch.setattr(rag_module, "answer", _spent)
+    response = client.post("/api/chat", json={"message": "hi"})
+    assert response.status_code == 429
+    assert "budget" in response.json()["detail"]

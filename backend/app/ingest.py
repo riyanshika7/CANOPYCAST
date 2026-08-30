@@ -63,6 +63,17 @@ DOC_META: dict[str, tuple[str, str]] = {
     # suited to Kolkata, so a question about what to plant here retrieved
     # Delhi and Bengaluru chunks. This reference closes that gap.
     "kolkata_avenue_trees.md": ("Avenue Trees for Kolkata", "Kolkata"),
+    # That reference still lists krishnachura and radhachura as avenue options.
+    # KMC stopped planting both after Amphan, so without this source the
+    # chatbot recommends species the city has ruled out.
+    "kolkata_amphan_plantation_policy.md": (
+        "Kolkata Plantation Policy After Amphan",
+        "Kolkata",
+    ),
+    "kolkata_low_carbon_roadmap.pdf": (
+        "Roadmap for Low Carbon Climate Resilient Kolkata",
+        "Kolkata",
+    ),
 }
 
 
@@ -261,7 +272,9 @@ def _build_default_client() -> OpenAI:
         raise RuntimeError(
             f"{OPENAI_KEY_ENV} is not set; export it before embedding."
         )
-    return OpenAI(api_key=api_key)
+    # Ingest is a long batch job, so it gets a longer ceiling than the request
+    # path, but not the SDK default of no effective limit.
+    return OpenAI(api_key=api_key, timeout=120.0, max_retries=3)
 
 
 def embed_texts(

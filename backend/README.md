@@ -97,6 +97,22 @@ Fusion. Lexical is not optional: queries are dominated by exact species tokens
 Answers are grounded in the selected map cell, so the same question against a
 41 C bare block and a shaded park block gives different advice.
 
+## Spend ceiling
+
+The chat route is reachable by anyone who can reach the API, and one chat turn
+costs two OpenAI calls: an embedding for the query and the completion. A loop in
+a client is enough to run up a bill nobody notices.
+
+`CANOPYCAST_MAX_CALLS` (default 500) and `CANOPYCAST_MAX_TOKENS` (default 2M)
+cap both. Crossing either returns 429 with the count in the body, and
+`/api/health` reports usage against the ceiling. Set either to 0 to disable it.
+
+Counters are per process and reset on restart, which is the right scope for one
+demo container and the wrong one for a multi-instance deploy.
+
+The cap counts calls and tokens rather than currency, since pricing for the chat
+model is not something this code can look up.
+
 ## Container
 
 ```bash
