@@ -261,7 +261,9 @@ def _build_default_client() -> OpenAI:
         raise RuntimeError(
             f"{OPENAI_KEY_ENV} is not set; export it before embedding."
         )
-    return OpenAI(api_key=api_key)
+    # Ingest is a long batch job, so it gets a longer ceiling than the request
+    # path, but not the SDK default of no effective limit.
+    return OpenAI(api_key=api_key, timeout=120.0, max_retries=3)
 
 
 def embed_texts(

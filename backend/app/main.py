@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from .budget import BUDGET, BudgetExceeded
 from . import config
 from .schema import (
     Cell,
@@ -130,6 +131,7 @@ def health():
         "corpus_ready": _corpus_ready(),
         "chat_ready": config.has_openai_key() and _corpus_ready(),
         "chat_model": config.CHAT_MODEL,
+        "usage": BUDGET.snapshot(),
     }
 
 
@@ -189,6 +191,8 @@ def recommend_trees(
 
     try:
         return rag.recommend_trees(city=city, cell=cell, retriever=retriever, n=n)
+    except BudgetExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
     except ValueError as exc:
         # The model returned something we could not parse into the schema.
         raise HTTPException(status_code=502, detail=f"recommendation failed: {exc}")
@@ -204,6 +208,9 @@ def chatbot_interaction(req: ChatRequest):
     retriever, store = _get_rag()
     try:
         return rag.answer(req, retriever=retriever, store=store)
+    except BudgetExceeded as exc:
+        # 429, not 502: the upstream is fine, this process has spent its cap.
+        raise HTTPException(status_code=429, detail=str(exc))
     except Exception as exc:
         log.exception("chat failed")
         raise HTTPException(status_code=502, detail=str(exc))
