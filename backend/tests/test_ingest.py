@@ -12,7 +12,7 @@ import pytest
 
 # Ensure no real key leaks in. Even though we never call the real client, a
 # stray OPENAI_API_KEY in CI would defeat the purpose of these tests.
-os.environ.pop("OPENAI_API_KEY", None)
+# Removal now happens for the whole suite in tests/conftest.py.
 
 from app import ingest  # noqa: E402
 

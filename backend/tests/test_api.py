@@ -350,3 +350,23 @@ def test_every_sprint_endpoint_is_mounted():
         "/api/recommend-trees",
     ):
         assert expected in paths, f"{expected} is not mounted"
+
+
+# ---------------------------------------------------------------------------
+# Chat: the frontend's minimal payload must not 422
+# ---------------------------------------------------------------------------
+
+
+def test_chat_without_session_id_is_accepted(client: TestClient) -> None:
+    """Chatbot.jsx posts {message} alone and falls back to canned text on any
+    error, so a 422 here shows the user invented advice with no citations."""
+    response = client.post("/api/chat", json={"message": "which trees should I plant"})
+    assert response.status_code != 422, response.text
+
+
+def test_chat_anonymous_sessions_do_not_share_history(client: TestClient) -> None:
+    from app.schema import ChatRequest
+
+    first = ChatRequest(message="a").session_id
+    second = ChatRequest(message="b").session_id
+    assert first != second

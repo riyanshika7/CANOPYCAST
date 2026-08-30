@@ -3,7 +3,9 @@
 Owned by main.py's author. Workers read this and do not edit it.
 """
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from uuid import uuid4
+
+from pydantic import BaseModel, Field, field_validator
 
 Density = Literal["Low", "Medium", "High"]
 
@@ -98,9 +100,19 @@ class RecommendResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: str
+    # Optional so a client that has not wired up sessions still gets a real
+    # answer instead of a 422. Without an id there is no conversation history,
+    # so follow-up questions like "which of those" will not resolve.
+    # validate_default, or the validator below never runs on an absent field.
+    session_id: Optional[str] = Field(default=None, validate_default=True)
     city: str = "Kolkata"
     selected_cell: Optional[Cell] = None
+
+    @field_validator("session_id", mode="after")
+    @classmethod
+    def _anonymous_session(cls, value: Optional[str]) -> str:
+        # A shared fallback id would let one user read another user's history.
+        return value or f"anon-{uuid4().hex}"
 
 
 class ChatResponse(BaseModel):
