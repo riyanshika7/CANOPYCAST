@@ -16,6 +16,7 @@ from rank_bm25 import BM25Okapi
 # imported outside the server.
 from . import config  # noqa: F401
 
+from .budget import BUDGET
 from .schema import (
     Cell,
     ChatRequest,
@@ -42,13 +43,19 @@ def _tokenize(text: str) -> list[str]:
     return _TOKEN.findall(text.lower())
 
 
+# The SDK default is a 10 minute timeout, which for a chat route means a demo
+# that appears frozen rather than one that reports a failure.
+REQUEST_TIMEOUT_S = 45.0
+MAX_RETRIES = 2
+
+
 def _real_openai_client():
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
         raise RuntimeError("OPENAI_API_KEY is not set")
     from openai import OpenAI
 
-    return OpenAI(api_key=key)
+    return OpenAI(api_key=key, timeout=REQUEST_TIMEOUT_S, max_retries=MAX_RETRIES)
 
 
 def _real_collection(chroma_dir=None):
@@ -142,7 +149,11 @@ class Retriever:
 
     def _embed(self, query: str) -> list[float]:
         model = os.environ.get("CANOPYCAST_EMBED_MODEL", "text-embedding-3-small")
+        # Every chat turn embeds the query, so this counts against the same
+        # ceiling as the completion it precedes.
+        BUDGET.check()
         resp = self._openai().embeddings.create(model=model, input=query)
+        BUDGET.record(resp)
         return resp.data[0].embedding
 
     def _dense_ids(self, query: str, n: int) -> list[str]:
@@ -363,7 +374,9 @@ def answer(
     if client is None:
         client = _real_openai_client()
     model = os.environ.get("CANOPYCAST_CHAT_MODEL", "gpt-5.6-luna")
+    BUDGET.check()
     resp = client.chat.completions.create(model=model, messages=messages)
+    BUDGET.record(resp)
     text = (resp.choices[0].message.content or "").strip()
     store.append(req.session_id, "user", req.message)
     store.append(req.session_id, "assistant", text)
@@ -547,11 +560,13 @@ def recommend_trees(
     if client is None:
         client = _real_openai_client()
     model = os.environ.get("CANOPYCAST_CHAT_MODEL", "gpt-5.6-luna")
+    BUDGET.check()
     resp = client.chat.completions.create(
         model=model,
         messages=messages,
         response_format={"type": "json_object"},
     )
+    BUDGET.record(resp)
     text = (resp.choices[0].message.content or "").strip()
     rows = _parse_recommendation_rows(text)
     recs: list[TreeRecommendation] = []
