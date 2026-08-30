@@ -14,7 +14,7 @@
 [![SQLite](https://img.shields.io/badge/Database-SQLite-003b57.svg?style=flat&logo=sqlite)](https://www.sqlite.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Styling-Tailwind--CSS-38bdf8.svg?style=flat&logo=tailwindcss)](https://tailwindcss.com/)
 
-**Live Demo:** [Live Demo](ADD_DEPLOYED_LINK_HERE)
+**Live Demo:** [Live Demo]((https://canopycast-frontend.onrender.com))
 
 **Repository:** `https://github.com/riyanshika7/CANOPYCAST.git`
 
