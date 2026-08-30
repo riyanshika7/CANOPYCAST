@@ -455,3 +455,65 @@ def test_chat_stream_reports_a_late_failure_in_band(client, monkeypatch):
     assert events[0] == {"token": "Plant "}
     assert "upstream died" in events[-1]["error"]
     assert not any("done" in e for e in events)
+
+
+# ---------------------------------------------------------------------------
+# Startup index build
+# ---------------------------------------------------------------------------
+
+
+def test_startup_build_is_skipped_without_a_key(monkeypatch) -> None:
+    """No key means no build to attempt, and no traceback in the boot log."""
+    from app import main as main_module
+
+    called = []
+    monkeypatch.setattr(main_module.threading, "Thread",
+                        lambda **kw: called.append(kw) or _NullThread())
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    main_module._maybe_build_index()
+    assert called == []
+
+
+def test_startup_build_is_skipped_when_the_corpus_exists(monkeypatch) -> None:
+    from app import main as main_module
+
+    called = []
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(main_module, "_corpus_ready", lambda: True)
+    monkeypatch.setattr(main_module.threading, "Thread",
+                        lambda **kw: called.append(kw) or _NullThread())
+    main_module._maybe_build_index()
+    assert called == []
+
+
+def test_startup_build_can_be_turned_off(monkeypatch) -> None:
+    from app import main as main_module
+
+    called = []
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("CANOPYCAST_AUTO_INGEST", "0")
+    monkeypatch.setattr(main_module, "_corpus_ready", lambda: False)
+    monkeypatch.setattr(main_module.threading, "Thread",
+                        lambda **kw: called.append(kw) or _NullThread())
+    main_module._maybe_build_index()
+    assert called == []
+
+
+def test_startup_build_runs_off_the_main_thread(monkeypatch) -> None:
+    """A slow embed must not hold the port shut and fail the health check."""
+    from app import main as main_module
+
+    called = []
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("CANOPYCAST_AUTO_INGEST", raising=False)
+    monkeypatch.setattr(main_module, "_corpus_ready", lambda: False)
+    monkeypatch.setattr(main_module.threading, "Thread",
+                        lambda **kw: called.append(kw) or _NullThread())
+    main_module._maybe_build_index()
+    assert len(called) == 1
+    assert called[0]["daemon"] is True
+
+
+class _NullThread:
+    def start(self):
+        return None

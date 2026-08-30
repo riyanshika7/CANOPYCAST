@@ -6,6 +6,7 @@ and retrieval plus answering in rag.py.
 import json
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 
@@ -87,7 +88,46 @@ async def lifespan(app: FastAPI):
         log.info("no grid database, seeding %s", config.DB_PATH)
         database.init_db(config.DB_PATH)
         database.seed_city(config.DB_PATH, config.DEFAULT_CITY)
+    _maybe_build_index()
     yield
+
+
+def _maybe_build_index() -> None:
+    """Build the vector index on boot if the host gives us no other way to.
+
+    A free hosting tier has no shell, so `python -m app.ingest` cannot be run
+    against the deployed container. Without this the service starts, reports
+    healthy, and answers 503 on chat forever, which reads as a broken product
+    rather than a missing build step.
+
+    Runs on a background thread so a slow embed does not hold the port shut and
+    fail the platform's health check. Health reports corpus_ready false until it
+    lands, which is true while it is running.
+
+    Skipped when the index already has chunks, so a mounted volume is built once
+    and reused. Every call it makes counts against the same budget as a request.
+    """
+    if os.environ.get("CANOPYCAST_AUTO_INGEST", "1") == "0":
+        return
+    if not config.has_openai_key():
+        log.info("no API key, skipping index build")
+        return
+    if _corpus_ready():
+        return
+
+    def build() -> None:
+        from . import ingest
+
+        try:
+            log.info("no corpus found, building the index")
+            count = ingest.build_index(config.DOCUMENTS_DIR)
+            log.info("index built with %s chunks", count)
+        except Exception:
+            # Never take the app down for this. The grid and optimizer do not
+            # need the index, and chat already degrades to a 503 with a reason.
+            log.exception("index build failed; chat stays unavailable")
+
+    threading.Thread(target=build, name="build-index", daemon=True).start()
 
 
 app = FastAPI(title="CanopyCast API", version="1.0.0", lifespan=lifespan)
