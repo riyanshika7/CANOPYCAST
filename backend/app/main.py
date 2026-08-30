@@ -3,6 +3,7 @@
 Routes are thin. The grid lives in database.py, the scoring in optimize.py,
 and retrieval plus answering in rag.py.
 """
+import json
 import logging
 import os
 import time
@@ -10,6 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from .budget import BUDGET, BudgetExceeded
 from . import config
@@ -122,6 +124,11 @@ def read_root():
     return {"service": "CanopyCast API", "docs": "/docs"}
 
 
+def _sse(payload: dict) -> str:
+    """One server-sent event. The blank line is the delimiter, not padding."""
+    return f"data: {json.dumps(payload)}\n\n"
+
+
 @app.get("/api/health")
 def health():
     """What the frontend polls to decide whether to use its offline fallback."""
@@ -199,6 +206,45 @@ def recommend_trees(
     except Exception as exc:
         log.exception("recommend-trees failed")
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.post("/api/chat/stream")
+def chatbot_stream(req: ChatRequest):
+    """The same answer as /api/chat, delivered as it is written.
+
+    Server-sent events. Each event is one JSON object: {"token": "..."} many
+    times, then {"citations": [...]} once, then {"done": true}. An error after
+    the first byte arrives as {"error": "..."} rather than a status code,
+    because the 200 has already gone out.
+
+    /api/chat stays as it is. A client that cannot read a stream should use it.
+    """
+    from . import rag
+
+    retriever, store = _get_rag()
+
+    def events():
+        try:
+            for kind, payload in rag.answer_stream(req, retriever=retriever, store=store):
+                if kind == "token":
+                    yield _sse({"token": payload})
+                else:
+                    yield _sse({"citations": [c.model_dump() for c in payload]})
+            yield _sse({"done": True})
+        except BudgetExceeded as exc:
+            yield _sse({"error": str(exc)})
+        except Exception as exc:
+            log.exception("chat stream failed")
+            yield _sse({"error": str(exc)})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        # Without this a proxy may buffer the whole response and hand the
+        # client one block at the end, which is the thing streaming exists to
+        # avoid.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/api/chat", response_model=ChatResponse)
