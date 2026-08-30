@@ -33,7 +33,7 @@ export default function Dashboard({
       setLoadingTrees(true);
       try {
         const cellId = selectedCell.id || `${Math.round(selectedCell.lat * 100)}_${Math.round(selectedCell.lon * 100)}`;
-        const response = await fetch(`http://127.0.0.1:8000/api/recommend-trees?city=${selectedCity || "Kolkata"}&cell_id=${cellId}`);
+        const response = await fetch(`https://canopycast-backend.onrender.com/api/recommend-trees?city=${selectedCity || "Kolkata"}&cell_id=${cellId}`);
         if (response.ok) {
           const data = await response.json();
           setTreeRecommendations(data.recommendations || []);
