@@ -10,94 +10,88 @@ import {
 } from "recharts";
 
 export default function TemperatureChart({ selectedCell }) {
-  if (!selectedCell) {
-    return (
-      <div className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm">
-        <h3 className="text-sm font-bold text-slate-700">
-          Temperature Comparison
-        </h3>
+  if (!selectedCell) return null;
 
-        <p className="text-xs text-slate-400 mt-3">
-          Select a grid cell on the map to view temperature comparison.
-        </p>
-      </div>
-    );
-  }
-
-  const cellTemperature =
-    selectedCell.temperature ?? selectedCell.temp ?? 0;
-
-  // Temporary Kolkata average.
-  // Later this can come from Chirag's backend.
+  const cellTemperature = selectedCell.temperature ?? selectedCell.temp ?? 0;
   const cityAverage = 34;
 
   const data = [
     {
-      name: "Selected Cell",
+      name: "Selected Block",
       temperature: cellTemperature,
+      fill: cellTemperature >= 38 ? "#EF4444" : cellTemperature >= 32 ? "#FACC15" : "#22C55E"
     },
     {
-      name: "Kolkata Avg.",
+      name: "City Average",
       temperature: cityAverage,
+      fill: "#166534"
     },
   ];
 
   return (
-    <div className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm">
-      <div className="flex items-center justify-between mb-4">
+    <div className="bg-white border border-nature-800/10 rounded-xl p-4 shadow-sm space-y-3">
+      <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-bold text-slate-800">
-            Temperature Comparison
+          <h3 className="text-xs font-bold text-nature-text">
+            Temperature Delta
           </h3>
-
-          <p className="text-[10px] text-slate-400 mt-1">
-            Selected location vs Kolkata average
+          <p className="text-[9px] text-nature-mutedText font-semibold mt-0.5">
+            Selected location vs city average
           </p>
         </div>
 
         <div className="text-right">
-          <p className="text-[10px] text-slate-400 uppercase">
+          <p className="text-[10px] text-nature-mutedText font-semibold uppercase">
             Difference
           </p>
-
-          <p className="text-sm font-bold text-red-600">
+          <p className={`text-xs font-black ${cellTemperature >= cityAverage ? "text-red-600" : "text-emerald-700"}`}>
             {cellTemperature >= cityAverage ? "+" : ""}
             {(cellTemperature - cityAverage).toFixed(1)}°C
           </p>
         </div>
       </div>
 
-      <div className="w-full h-56">
+      <div className="w-full h-40">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={data}
             margin={{
-              top: 10,
-              right: 10,
-              left: -20,
-              bottom: 5,
+              top: 5,
+              right: 5,
+              left: -35,
+              bottom: 0,
             }}
           >
-            <CartesianGrid strokeDasharray="3 3" />
-
+            <CartesianGrid stroke="#f1f7f2" strokeDasharray="3 3" vertical={false} />
             <XAxis
               dataKey="name"
-              tick={{ fontSize: 10 }}
+              tick={{ fontSize: 9, fill: "#647067", fontWeight: 600 }}
+              axisLine={false}
+              tickLine={false}
             />
-
             <YAxis
-              domain={["dataMin - 2", "dataMax + 2"]}
-              tick={{ fontSize: 10 }}
+              domain={[20, 45]}
+              tick={{ fontSize: 9, fill: "#647067", fontWeight: 600 }}
+              axisLine={false}
+              tickLine={false}
             />
-
             <Tooltip
+              cursor={{ fill: 'rgba(22, 101, 52, 0.03)' }}
+              contentStyle={{ 
+                backgroundColor: '#ffffff', 
+                border: '1px solid rgba(22, 101, 52, 0.1)', 
+                borderRadius: '8px',
+                fontSize: '10px',
+                fontWeight: 600,
+                color: '#17231B',
+                boxShadow: '0 4px 12px rgba(22, 101, 52, 0.05)'
+              }}
               formatter={(value) => [`${value}°C`, "Temperature"]}
             />
-
             <Bar
               dataKey="temperature"
-              radius={[6, 6, 0, 0]}
-              fill="#059669"
+              radius={[4, 4, 0, 0]}
+              barSize={32}
             />
           </BarChart>
         </ResponsiveContainer>
