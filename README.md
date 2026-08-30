@@ -109,7 +109,7 @@ A cell scores highest when it sits directly in the gap between two separate fore
 
 $$\text{CorridorScore} = \text{BridgingFactor} \cdot \text{ProximityFactor} \cdot \text{GreennessPenalty}$$
 
-*   **Bridging Factor:** $\frac{d_{\text{anchor\_pair}}}{d_{\text{anchor1}} + d_{\text{anchor2}}}$ — approaches 1.0 when the coordinate sits on a direct vector between two green reserve centroids.
+*   **Bridging Factor:** $\frac{d_{\text{anchor-pair}}}{d_{\text{anchor1}} + d_{\text{anchor2}}}$ — approaches 1.0 when the coordinate sits on a direct vector between two green reserve centroids.
 *   **Proximity Factor:** $\max(0, 1 - \frac{d_1 + d_2}{2 \cdot \text{diagonal}})$ — decays to 0 as the cell drifts away from the anchors (preventing isolated plantings).
 *   **Greenness Penalty:** $1.0 - \frac{\text{Canopy}\%}{100.0}$ — suppresses cells that are already heavily canopy-dense.
 
@@ -195,19 +195,6 @@ npm run dev
 3. **Compare Deltas:** The analytics dashboard displays how much warmer/cooler the selected block is compared to the city average.
 4. **Optimize:** Click **Optimize Green Canopy**. The algorithm evaluates the grid and draws green markers pointing to high-impact coordinates, updating the dashboard with aggregated CO₂ and stormwater diversion projections.
 5. **Consult Canopy AI:** Click **Canopy Assistant** in the bottom-right corner and ask species-specific planting or regulatory questions grounded in local guidelines.
-
----
-
-## 🚀 Current Status & Roadmap
-
-*   `[x]` Interactive urban heat visualization grid
-*   `[x]` Multi-objective priority scoring & spatial spread suppression
-*   `[x]` Calculated climate impact projections (CO₂, stormwater, cooling)
-*   `[x]` Grounded RAG AI Assistant with page citations
-*   `[x]` Dynamic city selection offsets & panning
-*   `[ ]` Real-time weather and satellite feed integrations (Sentinel-2)
-*   `[ ]` Community crowdsourced sapling tracking databases
-*   `[ ]` Historical heat-island trend analytics
 
 ---
 
