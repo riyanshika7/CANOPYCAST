@@ -15,9 +15,6 @@
 [![Tailwind CSS](https://img.shields.io/badge/Styling-Tailwind--CSS-38bdf8.svg?style=flat&logo=tailwindcss)](https://tailwindcss.com/)
 
 **Live Demo:** [Live Demo]((https://canopycast-frontend.onrender.com))
-
-**Repository:** `https://github.com/riyanshika7/CANOPYCAST.git`
-
 ---
 
 ## 💡 The Big Idea
